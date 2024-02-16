@@ -16,6 +16,7 @@
   "dependencies": {
     "@arcgis/core": "^4.30.0-next.20240202",
     "gl-matrix": "^3.4.3",
+    "satellite.js": "^5.0.0",
     "three": "^0.161.0"
   }
 }
