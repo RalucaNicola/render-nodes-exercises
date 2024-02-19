@@ -80,6 +80,10 @@ class GeometryRenderNode extends RenderNode {
         this.resetWebGLState();
         const output = this.bindRenderTarget();
         const gl = this.gl;
+        gl.enable(gl.DEPTH_TEST);
+        gl.enable(gl.CULL_FACE);
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vboPositions);
         gl.enableVertexAttribArray(this.attribPositionLocation);
         gl.vertexAttribPointer(this.attribPositionLocation, 3, gl.FLOAT, false, 0, 0);
@@ -199,7 +203,7 @@ export function calculatePointsOnParaboloid({ start, end }: { start: Vertex, end
         const z = ratio * (p - ratio) * dh + z0;
         const color = Color.blendColors(new Color(start.color), new Color(end.color), ratio);
         const { r, g, b, a } = color;
-        points.push({ x, y, z, color: [r, g, b, a * 255] })
+        points.push({ x, y, z, color: [r, g, b, Math.floor(a * 255)] })
     }
     return points;
 }
@@ -217,14 +221,14 @@ try {
                         const start = {
                             x: start_x,
                             y: start_y,
-                            z: 0,
-                            color: [255, 0, 0, 100]
+                            z: 50,
+                            color: [252, 144, 3, 0.1]
                         }
                         const end = {
                             x: end_x,
                             y: end_y,
-                            z: 0,
-                            color: [0, 255, 0, 100]
+                            z: 50,
+                            color: [3, 215, 252, 1]
                         }
                         return calculatePointsOnParaboloid({ start, end });
 
