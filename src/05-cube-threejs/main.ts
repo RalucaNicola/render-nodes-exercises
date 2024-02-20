@@ -41,7 +41,6 @@ const view = new SceneView({
     },
 });
 
-window.view = view;
 
 @subclass("esri.views.3d.AddGeometryRenderPass")
 class AddGeometryRenderPass extends RenderNode {
@@ -58,7 +57,6 @@ class AddGeometryRenderPass extends RenderNode {
     ambientLight: THREE.AmbientLight;
 
     setup() {
-        console.log("setting up");
         this.threeScene = new THREE.Scene();
         this.threeCamera = new THREE.PerspectiveCamera();
 
@@ -67,16 +65,15 @@ class AddGeometryRenderPass extends RenderNode {
         const material = new THREE.MeshBasicMaterial({ color: "#ff0000" });
         const cube = new THREE.Mesh(geometry, material);
         const renderCoords = webgl.toRenderCoordinates(view, [950763.6511, 6002193.8497, 450], 0, SpatialReference.WebMercator, new Float64Array(3), 0, 1);
-        cube.position.set(4272301.151100491, 641614.4576710378, 0);
-        console.log(renderCoords);
+        cube.position.set(renderCoords[0], renderCoords[1], renderCoords[2]);
         this.threeScene.add(cube);
 
-        // this.directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
-        // this.ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-        // this.threeScene.add(
-        //     this.directionalLight,
-        //     this.ambientLight
-        // );
+        this.directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        this.ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        this.threeScene.add(
+            this.directionalLight,
+            this.ambientLight
+        );
 
         this.threeRenderer = new THREE.WebGLRenderer({
             context: this.gl
@@ -89,8 +86,6 @@ class AddGeometryRenderPass extends RenderNode {
     }
 
     override render(_inputs: ManagedFBO[]): ManagedFBO {
-        this.resetWebGLState();
-        // const output = this.acquireOutputFramebuffer();
         const output = this.bindRenderTarget();
         const { width, height } = this.view;
 
@@ -98,28 +93,17 @@ class AddGeometryRenderPass extends RenderNode {
             this.setup();
         }
 
-        // const direction = this.sunLight.direction;
-        // const diffuse = this.sunLight.diffuse;
-        // const ambient = this.sunLight.ambient;
+        const direction = this.sunLight.direction;
+        const diffuse = this.sunLight.diffuse;
+        const ambient = this.sunLight.ambient;
 
-        // this.directionalLight.color.setRGB(diffuse.color[0], diffuse.color[1], diffuse.color[2]);
-        // this.directionalLight.intensity = diffuse.intensity;
-        // this.directionalLight.position.set(direction[0], direction[1], direction[2]);
+        this.directionalLight.color.setRGB(diffuse.color[0], diffuse.color[1], diffuse.color[2]);
+        this.directionalLight.intensity = diffuse.intensity;
+        this.directionalLight.position.set(direction[0], direction[1], direction[2]);
 
-        // this.ambientLight.color.setRGB(ambient.color[0], ambient.color[1], ambient.color[2]);
-        // this.ambientLight.intensity = ambient.intensity;
+        this.ambientLight.color.setRGB(ambient.color[0], ambient.color[1], ambient.color[2]);
+        this.ambientLight.intensity = ambient.intensity;
 
-
-        // this.effectComposer = new EffectComposer(this.threeRenderer);
-
-
-        // const renderPass = new RenderPass(this.threeScene, this.threeCamera)
-        // this.effectComposer.addPass(renderPass);
-        // const dotScreenPass = new DotScreenPass();
-        // this.effectComposer.addPass(dotScreenPass);
-
-        // const unrealBloomPass = new UnrealBloomPass(new THREE.Vector2(width, height), 0.5, 3, 0);
-        // this.effectComposer.addPass(unrealBloomPass);
         const c = this.camera;
 
         this.threeCamera.position.set(c.eye[0], c.eye[1], c.eye[2]);
@@ -129,20 +113,18 @@ class AddGeometryRenderPass extends RenderNode {
 
         this.threeRenderer.setSize(width, height);
         this.threeRenderer.setPixelRatio(window.devicePixelRatio);
-        // this.effectComposer.setPixelRatio(window.devicePixelRatio);
-        // this.effectComposer.setSize(width, height);
-        // this.effectComposer.renderToScreen = true;
 
         this.threeRenderer.render(this.threeScene, this.threeCamera);
-        //this.effectComposer.render();
 
         this.resetWebGLState();
+        this.threeRenderer.resetState();
         return output;
     }
 }
 
 new AddGeometryRenderPass({ view });
 
+// a function for testing that cube rendering works in ThreeJS alone
 function pureThreeJSCube() {
     const canvas = document.querySelector('canvas.webgl') as HTMLCanvasElement;
 
@@ -193,5 +175,3 @@ function pureThreeJSCube() {
 
     render();
 }
-
-pureThreeJSCube();
