@@ -6,36 +6,39 @@ import SceneView from "@arcgis/core/views/SceneView";
 import { createProgram } from "../utils";
 import * as webgl from "@arcgis/core/views/3d/webgl";
 import SpatialReference from "@arcgis/core/geometry/SpatialReference";
-import Papa from "papaparse";
 import Color from "@arcgis/core/Color";
 import * as webMercatorUtils from "@arcgis/core/geometry/support/webMercatorUtils";
+import TimeSlider from "@arcgis/core/widgets/TimeSlider";
+import { watch } from "@arcgis/core/core/reactiveUtils";
 
 interface Vertex {
     x: number;
     y: number;
     z: number;
     color: Array<number>;
-    time?: string;
+    time?: number;
 }
 
-const NO_SEG = 20;
+const NO_SEG = 100;
 const NO_POSITION_COORDS = 3;
 const NO_COLOR_COORDS = 4;
 let vertices: Array<Vertex> = null;
-
+const startDate = new Date("2023-09-01 07:00:00");
+const endDate = new Date("2023-09-01 07:20:00");
+let currentTime = startDate.getTime();
 const start = {
     x: -71.087986,
     y: 42.336244,
     z: 0,
     color: [252, 144, 3, 1],
-    time: "2023-09-01 07:00:06"
+    time: startDate.getTime() - startDate.getTime()
 };
 const end = {
     x: -71.076546,
     y: 42.366447,
     z: 0,
     color: [3, 215, 252, 1],
-    time: "2023-09-01 07:16:59"
+    time: endDate.getTime() - startDate.getTime()
 };
 
 const view = new SceneView({
@@ -71,11 +74,14 @@ class GeometryRenderNode extends RenderNode {
 
     attribPositionLocation: number;
     attribColorLocation: number;
+    attribTimeLocation: number;
+    uniformCurrentTimeLocation: WebGLUniformLocation;
     uniformProjectionMatrixLocation: WebGLUniformLocation;
     uniformModelViewMatrixLocation: WebGLUniformLocation;
 
     vboPositions: WebGLBuffer;
     vboColor: WebGLBuffer;
+    vboTime: WebGLBuffer;
 
     initialize() {
         this.initShaders();
@@ -83,9 +89,12 @@ class GeometryRenderNode extends RenderNode {
     }
 
     override render(inputs: ManagedFBO[]): ManagedFBO {
-        this.resetWebGLState();
+
         const output = this.bindRenderTarget();
         const gl = this.gl;
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vboPositions);
         gl.enableVertexAttribArray(this.attribPositionLocation);
         gl.vertexAttribPointer(this.attribPositionLocation, 3, gl.FLOAT, false, 0, 0);
@@ -94,7 +103,13 @@ class GeometryRenderNode extends RenderNode {
         gl.enableVertexAttribArray(this.attribColorLocation);
         gl.vertexAttribPointer(this.attribColorLocation, 4, gl.UNSIGNED_BYTE, true, 0, 0);
 
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.vboTime);
+        gl.enableVertexAttribArray(this.attribTimeLocation);
+        gl.vertexAttribPointer(this.attribTimeLocation, 1, gl.FLOAT, false, 0, 0);
+
         gl.useProgram(this.program);
+
+        gl.uniform1f(this.uniformCurrentTimeLocation, currentTime);
 
         gl.uniformMatrix4fv(
             this.uniformProjectionMatrixLocation,
@@ -112,6 +127,7 @@ class GeometryRenderNode extends RenderNode {
             gl.drawArrays(gl.LINE_STRIP, i, NO_SEG);
         }
         this.resetWebGLState();
+
         return output;
     }
 
@@ -122,6 +138,8 @@ class GeometryRenderNode extends RenderNode {
         const vsSource = `#version 300 es
         in vec4 a_position;
         in vec4 a_color;
+        in float a_time;
+        uniform float u_currentTime;
         uniform mat4 u_projectionMatrix;
         uniform mat4 u_modelViewMatrix;
 
@@ -129,7 +147,8 @@ class GeometryRenderNode extends RenderNode {
 
         void main() {
             gl_Position = u_projectionMatrix * u_modelViewMatrix * a_position;
-            v_color = a_color;
+            float alpha = step(a_time, u_currentTime);
+            v_color = vec4(a_color.xyz, alpha);
         }
     `;
 
@@ -151,17 +170,20 @@ class GeometryRenderNode extends RenderNode {
         // get program attributes locations
         this.attribPositionLocation = gl.getAttribLocation(this.program, "a_position");
         this.attribColorLocation = gl.getAttribLocation(this.program, "a_color");
+        this.attribTimeLocation = gl.getAttribLocation(this.program, "a_time");
         // get program uniforms locations
+        this.uniformCurrentTimeLocation = gl.getUniformLocation(this.program, "u_currentTime");
         this.uniformProjectionMatrixLocation = gl.getUniformLocation(this.program, "u_projectionMatrix");
         this.uniformModelViewMatrixLocation = gl.getUniformLocation(this.program, "u_modelViewMatrix");
     }
 
     initData() {
         const gl = this.gl;
-
+        console.log(vertices);
         const numPoints = vertices.length;
         let positions = new Float32Array(numPoints * NO_POSITION_COORDS);
         let colors = new Float32Array(numPoints * NO_COLOR_COORDS);
+        let times = new Float32Array(numPoints);
 
         for (let i = 0; i < numPoints; i++) {
             const { x, y, z, color } = vertices[i];
@@ -172,9 +194,8 @@ class GeometryRenderNode extends RenderNode {
             for (let j = 0; j < NO_COLOR_COORDS; j++) {
                 colors[i * NO_COLOR_COORDS + j] = color[j];
             }
+            times[i] = vertices[i].time;
         }
-
-        console.log(positions, colors);
 
         this.vboPositions = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vboPositions);
@@ -184,14 +205,18 @@ class GeometryRenderNode extends RenderNode {
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vboColor);
         gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(colors), gl.STATIC_DRAW);
 
+        this.vboTime = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.vboTime);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(times), gl.STATIC_DRAW);
+
     }
 }
 
 export function calculatePointsOnParaboloid({ start, end }: { start: Vertex, end: Vertex }) {
     const points: Array<Vertex> = [];
     const H = 0.5;
-    const { x: xs, y: ys, z: zs } = start;
-    const { x: xe, y: ye, z: ze } = end;
+    const { x: xs, y: ys, z: zs, time: time_s } = start;
+    const { x: xe, y: ye, z: ze, time: time_e } = end;
     const distance = Math.sqrt((xe - xs) ** 2 + (ye - ys) ** 2);
     const deltaZ = ze - zs;
     const dh = distance * H;
@@ -199,13 +224,15 @@ export function calculatePointsOnParaboloid({ start, end }: { start: Vertex, end
         const unitZ = deltaZ / dh;
         const p = unitZ * unitZ + 1;
         const z0 = deltaZ >= 0 ? zs : ze;
-        const ratio = deltaZ > 0 ? i / (NO_SEG - 1) : (1 - (i / (NO_SEG - 1)));
+        const ratio = deltaZ >= 0 ? i / (NO_SEG - 1) : (1 - (i / (NO_SEG - 1)));
         const x = xs * ratio + xe * (1 - ratio);
         const y = ys * ratio + ye * (1 - ratio);
         const z = ratio * (p - ratio) * dh + z0;
         const color = Color.blendColors(new Color(start.color), new Color(end.color), ratio);
-        const { r, g, b, a } = color;
-        points.push({ x, y, z, color: [r, g, b, a * 255] })
+        const { r, g, b } = color;
+        const time = time_s + (time_e - time_s) * ratio;
+        console.log(time);
+        points.push({ x, y, z, color: [r, g, b, 0], time })
     }
     return points;
 }
@@ -215,7 +242,31 @@ try {
         const [start_x, start_y] = webMercatorUtils.lngLatToXY(start.x, start.y);
         const [end_x, end_y] = webMercatorUtils.lngLatToXY(end.x, end.y);
         vertices = calculatePointsOnParaboloid({ start: { ...start, x: start_x, y: start_y }, end: { ...end, x: end_x, y: end_y } });
-        new GeometryRenderNode({ view });
+        const renderNode = new GeometryRenderNode({ view });
+        const stopsCount = Math.floor((endDate.getTime() - startDate.getTime()) / 30000);
+
+        const timeSlider = new TimeSlider({
+            mode: "cumulative-from-start",
+            view,
+            fullTimeExtent: {
+                start: startDate,
+                end: endDate
+            },
+            playRate: 50,
+            stops: {
+                count: stopsCount,
+            }
+        });
+        view.ui.add(timeSlider, "bottom-left");
+
+        watch(
+            () => timeSlider.timeExtent,
+            (value) => {
+                console.log(value.end);
+                currentTime = value.end.getTime() - startDate.getTime();
+                renderNode.requestRender();
+            }
+        );
     });
 
 } catch (error) {

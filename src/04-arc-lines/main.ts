@@ -9,6 +9,9 @@ import SpatialReference from "@arcgis/core/geometry/SpatialReference";
 import Papa from "papaparse";
 import Color from "@arcgis/core/Color";
 import * as webMercatorUtils from "@arcgis/core/geometry/support/webMercatorUtils";
+import { watch } from "@arcgis/core/core/reactiveUtils";
+import TimeInterval from "@arcgis/core/TimeInterval";
+import TimeSlider from "@arcgis/core/widgets/TimeSlider";
 
 interface Trip {
     tripID: string;
@@ -25,11 +28,16 @@ interface Vertex {
     y: number;
     z: number;
     color: Array<number>;
+    time: number;
+    endTime: number;
 }
 
-const NO_SEG = 20;
+const NO_SEG = 30;
 const NO_POSITION_COORDS = 3;
 const NO_COLOR_COORDS = 4;
+let startDate: Date = null;
+let endDate: Date = null;
+let currentTime: number = null;
 let vertices: Array<Vertex> = null;
 
 const view = new SceneView({
@@ -65,11 +73,16 @@ class GeometryRenderNode extends RenderNode {
 
     attribPositionLocation: number;
     attribColorLocation: number;
+    attribTimeLocation: number;
+    attribEndTimeLocation: number;
+    uniformCurrentTimeLocation: WebGLUniformLocation;
     uniformProjectionMatrixLocation: WebGLUniformLocation;
     uniformModelViewMatrixLocation: WebGLUniformLocation;
 
     vboPositions: WebGLBuffer;
     vboColor: WebGLBuffer;
+    vboTime: WebGLBuffer;
+    vboEndTime: WebGLBuffer;
 
     initialize() {
         this.initShaders();
@@ -77,13 +90,14 @@ class GeometryRenderNode extends RenderNode {
     }
 
     override render(inputs: ManagedFBO[]): ManagedFBO {
-        this.resetWebGLState();
+
         const output = this.bindRenderTarget();
         const gl = this.gl;
         gl.enable(gl.DEPTH_TEST);
         gl.enable(gl.CULL_FACE);
         gl.enable(gl.BLEND);
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vboPositions);
         gl.enableVertexAttribArray(this.attribPositionLocation);
         gl.vertexAttribPointer(this.attribPositionLocation, 3, gl.FLOAT, false, 0, 0);
@@ -92,7 +106,17 @@ class GeometryRenderNode extends RenderNode {
         gl.enableVertexAttribArray(this.attribColorLocation);
         gl.vertexAttribPointer(this.attribColorLocation, 4, gl.UNSIGNED_BYTE, true, 0, 0);
 
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.vboTime);
+        gl.enableVertexAttribArray(this.attribTimeLocation);
+        gl.vertexAttribPointer(this.attribTimeLocation, 1, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.vboEndTime);
+        gl.enableVertexAttribArray(this.attribEndTimeLocation);
+        gl.vertexAttribPointer(this.attribEndTimeLocation, 1, gl.FLOAT, false, 0, 0);
+
         gl.useProgram(this.program);
+
+        gl.uniform1f(this.uniformCurrentTimeLocation, currentTime);
 
         gl.uniformMatrix4fv(
             this.uniformProjectionMatrixLocation,
@@ -106,8 +130,8 @@ class GeometryRenderNode extends RenderNode {
             this.camera.viewMatrix
         );
 
-        for (let i = 0; i <= vertices.length; i += 20) {
-            gl.drawArrays(gl.LINE_STRIP, i, 20);
+        for (let i = 0; i <= vertices.length; i += NO_SEG) {
+            gl.drawArrays(gl.LINE_STRIP, i, NO_SEG);
         }
         this.resetWebGLState();
         return output;
@@ -120,14 +144,28 @@ class GeometryRenderNode extends RenderNode {
         const vsSource = `#version 300 es
         in vec4 a_position;
         in vec4 a_color;
+        in float a_time;
+        in float a_endTime;
+        uniform float u_currentTime;
         uniform mat4 u_projectionMatrix;
         uniform mat4 u_modelViewMatrix;
 
         out vec4 v_color;
 
         void main() {
+            float alpha;
             gl_Position = u_projectionMatrix * u_modelViewMatrix * a_position;
-            v_color = a_color;
+            if (u_currentTime - a_endTime > 360000.0) {
+                alpha = 0.2;
+            } else {
+                if (a_time - u_currentTime > 0.0) {
+                    alpha = 0.0;
+                } else {
+                    alpha = 1.0;
+                }
+            }
+            
+            v_color = vec4(a_color.xyz, alpha);
         }
     `;
 
@@ -149,20 +187,25 @@ class GeometryRenderNode extends RenderNode {
         // get program attributes locations
         this.attribPositionLocation = gl.getAttribLocation(this.program, "a_position");
         this.attribColorLocation = gl.getAttribLocation(this.program, "a_color");
+        this.attribTimeLocation = gl.getAttribLocation(this.program, "a_time");
+        this.attribEndTimeLocation = gl.getAttribLocation(this.program, "a_endTime");
         // get program uniforms locations
+        this.uniformCurrentTimeLocation = gl.getUniformLocation(this.program, "u_currentTime");
         this.uniformProjectionMatrixLocation = gl.getUniformLocation(this.program, "u_projectionMatrix");
         this.uniformModelViewMatrixLocation = gl.getUniformLocation(this.program, "u_modelViewMatrix");
     }
 
     initData() {
         const gl = this.gl;
-
+        console.log(vertices);
         const numPoints = vertices.length;
         let positions = new Float32Array(numPoints * NO_POSITION_COORDS);
         let colors = new Float32Array(numPoints * NO_COLOR_COORDS);
+        let times = new Float32Array(numPoints);
+        let endTimes = new Float32Array(numPoints);
 
         for (let i = 0; i < numPoints; i++) {
-            const { x, y, z, color } = vertices[i];
+            const { x, y, z, color, time, endTime } = vertices[i];
             const renderCoords = webgl.toRenderCoordinates(view, [x, y, z], 0, SpatialReference.WebMercator, new Float32Array(3), 0, 1);
             for (let j = 0; j < NO_POSITION_COORDS; j++) {
                 positions[i * NO_POSITION_COORDS + j] = renderCoords[j];
@@ -170,9 +213,9 @@ class GeometryRenderNode extends RenderNode {
             for (let j = 0; j < NO_COLOR_COORDS; j++) {
                 colors[i * NO_COLOR_COORDS + j] = color[j];
             }
+            times[i] = time;
+            endTimes[i] = endTime;
         }
-
-        console.log(positions, colors);
 
         this.vboPositions = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vboPositions);
@@ -182,14 +225,21 @@ class GeometryRenderNode extends RenderNode {
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vboColor);
         gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(colors), gl.STATIC_DRAW);
 
+        this.vboTime = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.vboTime);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(times), gl.STATIC_DRAW);
+
+        this.vboEndTime = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.vboEndTime);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(endTimes), gl.STATIC_DRAW);
     }
 }
 
 export function calculatePointsOnParaboloid({ start, end }: { start: Vertex, end: Vertex }) {
     const points: Array<Vertex> = [];
-    const H = 0.5;
-    const { x: xs, y: ys, z: zs } = start;
-    const { x: xe, y: ye, z: ze } = end;
+    const H = 1.0;
+    const { x: xs, y: ys, z: zs, time: time_s } = start;
+    const { x: xe, y: ye, z: ze, time: time_e } = end;
     const distance = Math.sqrt((xe - xs) ** 2 + (ye - ys) ** 2);
     const deltaZ = ze - zs;
     const dh = distance * H;
@@ -203,7 +253,8 @@ export function calculatePointsOnParaboloid({ start, end }: { start: Vertex, end
         const z = ratio * (p - ratio) * dh + z0;
         const color = Color.blendColors(new Color(start.color), new Color(end.color), ratio);
         const { r, g, b, a } = color;
-        points.push({ x, y, z, color: [r, g, b, Math.floor(a * 255)] })
+        const time = time_s + (time_e - time_s) * ratio;
+        points.push({ x, y, z, color: [r, g, b, Math.floor(a * 255)], time, endTime: time_e })
     }
     return points;
 }
@@ -212,23 +263,31 @@ try {
     view.when(() => {
         Papa.parse("./trips_0109_cambridge.csv", {
             delimiter: ",", download: true, header: true, dynamicTyping: true, complete: (result) => {
-
+                // sort by time
+                result.data.sort((a: Trip, b: Trip) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+                startDate = new Date((result.data[0] as Trip).startTime);
+                endDate = new Date((result.data[result.data.length - 1] as Trip).endTime);
+                currentTime = startDate.getTime() - startDate.getTime();
                 const trips = result.data.map((trip: Trip) => {
                     if (trip && trip.tripID) {
-                        const { start_lng, start_lat, end_lng, end_lat } = trip;
-                        const [start_x, start_y] = webMercatorUtils.lngLatToXY(start_lng, start_lat);
-                        const [end_x, end_y] = webMercatorUtils.lngLatToXY(end_lng, end_lat);
+                        const { start_lng, start_lat, end_lng, end_lat, startTime, endTime } = trip;
+                        const [startX, startY] = webMercatorUtils.lngLatToXY(start_lng, start_lat);
+                        const [endX, endY] = webMercatorUtils.lngLatToXY(end_lng, end_lat);
                         const start = {
-                            x: start_x,
-                            y: start_y,
+                            x: startX,
+                            y: startY,
                             z: 50,
-                            color: [252, 144, 3, 0.1]
+                            color: [252, 144, 3, 0],
+                            time: new Date(startTime).getTime() - startDate.getTime(),
+                            endTime: new Date(endTime).getTime() - startDate.getTime()
                         }
                         const end = {
-                            x: end_x,
-                            y: end_y,
+                            x: endX,
+                            y: endY,
                             z: 50,
-                            color: [3, 215, 252, 1]
+                            color: [3, 215, 252, 0],
+                            time: new Date(endTime).getTime() - startDate.getTime(),
+                            endTime: new Date(endTime).getTime() - startDate.getTime()
                         }
                         return calculatePointsOnParaboloid({ start, end });
 
@@ -236,7 +295,32 @@ try {
                 });
 
                 vertices = trips.flat();
-                new GeometryRenderNode({ view });
+                const renderNode = new GeometryRenderNode({ view });
+
+                const stopsCount = Math.floor((endDate.getTime() - startDate.getTime()) / 30000);
+
+                const timeSlider = new TimeSlider({
+                    mode: "cumulative-from-start",
+                    view,
+                    fullTimeExtent: {
+                        start: startDate,
+                        end: endDate
+                    },
+                    playRate: 100,
+                    stops: {
+                        count: stopsCount
+                    }
+                });
+
+                view.ui.add(timeSlider, "bottom-left");
+
+                watch(
+                    () => timeSlider.timeExtent,
+                    (value) => {
+                        currentTime = value.end.getTime() - startDate.getTime();
+                        renderNode.requestRender();
+                    }
+                );
             }
         })
     });
@@ -244,4 +328,3 @@ try {
 } catch (error) {
     console.error(error);
 }
-
