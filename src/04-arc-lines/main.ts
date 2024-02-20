@@ -154,9 +154,10 @@ class GeometryRenderNode extends RenderNode {
 
         void main() {
             float alpha;
+            float timeDiff = u_currentTime - a_endTime;
             gl_Position = u_projectionMatrix * u_modelViewMatrix * a_position;
-            if (u_currentTime - a_endTime > 360000.0) {
-                alpha = 0.2;
+            if ( timeDiff > 360000.0) {
+                alpha = max(0.1, 0.1 - 0.9 * (timeDiff - 600000.0) / 240000.0);
             } else {
                 if (a_time - u_currentTime > 0.0) {
                     alpha = 0.0;
