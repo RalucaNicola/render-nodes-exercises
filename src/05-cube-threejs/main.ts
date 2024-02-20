@@ -1,17 +1,11 @@
 import SceneView from '@arcgis/core/views/SceneView';
-import { watch } from "@arcgis/core/core/reactiveUtils";
 import * as webgl from "@arcgis/core/views/3d/webgl";
 import { SpatialReference } from "@arcgis/core/geometry";
-import { mat4 } from 'gl-matrix';
 import WebScene from '@arcgis/core/WebScene';
 import { subclass } from "@arcgis/core/core/accessorSupport/decorators";
 import RenderNode from "@arcgis/core/views/3d/webgl/RenderNode";
 import ManagedFBO from "@arcgis/core/views/3d/webgl/ManagedFBO";
 import * as THREE from "three";
-import Mesh from '@arcgis/core/geometry/Mesh';
-import Point from '@arcgis/core/geometry/Point';
-import Graphic from '@arcgis/core/Graphic';
-import { FillSymbol3DLayer, MeshSymbol3D } from '@arcgis/core/symbols';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass';
@@ -47,8 +41,6 @@ class AddGeometryRenderPass extends RenderNode {
     consumes: __esri.ConsumedNodes = { required: ["opaque-color"] };
     produces: __esri.RenderNodeOutput = "opaque-color";
 
-    // local origin x,y,z -> the cube will draw relative to this
-    localOrigin: Float32Array = new Float32Array([950763.6511, 6002193.8497, 450]);
     threeRenderer: THREE.WebGLRenderer = null;
     effectComposer: EffectComposer;
     threeScene: THREE.Scene = null;
@@ -60,7 +52,6 @@ class AddGeometryRenderPass extends RenderNode {
         this.threeScene = new THREE.Scene();
         this.threeCamera = new THREE.PerspectiveCamera();
 
-        // Create a cube
         const geometry = new THREE.BoxGeometry(10, 10, 10);
         const material = new THREE.MeshBasicMaterial({ color: "#ff0000" });
         const cube = new THREE.Mesh(geometry, material);
@@ -149,20 +140,18 @@ function pureThreeJSCube() {
     renderer.setSize(sizes.width, sizes.height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-    // Effect composer
     const effectComposer = new EffectComposer(renderer)
     effectComposer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     effectComposer.setSize(sizes.width, sizes.height)
 
-    // Render pass
     const renderPass = new RenderPass(scene, camera);
     effectComposer.addPass(renderPass);
 
-    // const dotScreenPass = new DotScreenPass();
-    // effectComposer.addPass(dotScreenPass);
+    const dotScreenPass = new DotScreenPass();
+    effectComposer.addPass(dotScreenPass);
 
-    // const glitchPass = new GlitchPass();
-    // effectComposer.addPass(glitchPass);
+    const glitchPass = new GlitchPass();
+    effectComposer.addPass(glitchPass);
 
     const unrealBloomPass = new UnrealBloomPass(new THREE.Vector2(sizes.width, sizes.height), 0.5, 3, 0);
     effectComposer.addPass(unrealBloomPass);
