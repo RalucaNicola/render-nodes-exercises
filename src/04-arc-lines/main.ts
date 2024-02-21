@@ -10,17 +10,17 @@ import Papa from "papaparse";
 import Color from "@arcgis/core/Color";
 import * as webMercatorUtils from "@arcgis/core/geometry/support/webMercatorUtils";
 import { watch } from "@arcgis/core/core/reactiveUtils";
-import TimeInterval from "@arcgis/core/TimeInterval";
 import TimeSlider from "@arcgis/core/widgets/TimeSlider";
 
 interface Trip {
     tripID: string;
-    start_lng: number;
-    start_lat: number;
-    end_lng: number;
-    end_lat: number;
+    startLng: number;
+    startLat: number;
+    endLng: number;
+    endLat: number;
     startTime: string;
     endTime: string;
+    durationMin: number;
 }
 
 interface Vertex {
@@ -248,9 +248,9 @@ export function calculatePointsOnParaboloid({ start, end }: { start: Vertex, end
         const unitZ = deltaZ / dh;
         const p = unitZ * unitZ + 1;
         const z0 = deltaZ >= 0 ? zs : ze;
-        const ratio = deltaZ > 0 ? i / (NO_SEG - 1) : (1 - (i / (NO_SEG - 1)));
-        const x = xs * ratio + xe * (1 - ratio);
-        const y = ys * ratio + ye * (1 - ratio);
+        const ratio = deltaZ >= 0 ? i / (NO_SEG - 1) : (1 - (i / (NO_SEG - 1)));
+        const x = xs * (1 - ratio) + xe * ratio;
+        const y = ys * (1 - ratio) + ye * ratio;
         const z = ratio * (p - ratio) * dh + z0;
         const color = Color.blendColors(new Color(start.color), new Color(end.color), ratio);
         const { r, g, b, a } = color;
@@ -260,25 +260,36 @@ export function calculatePointsOnParaboloid({ start, end }: { start: Vertex, end
     return points;
 }
 
+const currentTimeContainer = document.getElementById("currentTime");
+const dateToString = (date: Date) => {
+    return new Intl.DateTimeFormat("en-US", {
+        hour: "numeric",
+        minute: "numeric",
+        hour12: true,
+    }).format(date);
+};
+
 try {
     view.when(() => {
-        Papa.parse("./trips_0109_cambridge.csv", {
+        Papa.parse("./20240101-tripdata-cambridge.csv", {
             delimiter: ",", download: true, header: true, dynamicTyping: true, complete: (result) => {
                 // sort by time
-                result.data.sort((a: Trip, b: Trip) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
-                startDate = new Date((result.data[0] as Trip).startTime);
-                endDate = new Date((result.data[result.data.length - 1] as Trip).endTime);
+                const data = result.data.filter((trip: Trip) => trip.startTime && trip.endTime);
+                data.sort((a: Trip, b: Trip) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
+                startDate = new Date((data[0] as Trip).startTime);
+                endDate = new Date((data[data.length - 1] as Trip).endTime);
                 currentTime = startDate.getTime() - startDate.getTime();
-                const trips = result.data.map((trip: Trip) => {
-                    if (trip && trip.tripID) {
-                        const { start_lng, start_lat, end_lng, end_lat, startTime, endTime } = trip;
-                        const [startX, startY] = webMercatorUtils.lngLatToXY(start_lng, start_lat);
-                        const [endX, endY] = webMercatorUtils.lngLatToXY(end_lng, end_lat);
+                let trips: Vertex[][] = [];
+                data.forEach((trip: Trip) => {
+                    if (trip && trip.startTime) {
+                        const { startLng, startLat, endLng, endLat, startTime, endTime } = trip;
+                        const [startX, startY] = webMercatorUtils.lngLatToXY(startLng, startLat);
+                        const [endX, endY] = webMercatorUtils.lngLatToXY(endLng, endLat);
                         const start = {
                             x: startX,
                             y: startY,
                             z: 50,
-                            color: [252, 144, 3, 0],
+                            color: [245, 66, 173, 0],
                             time: new Date(startTime).getTime() - startDate.getTime(),
                             endTime: new Date(endTime).getTime() - startDate.getTime()
                         }
@@ -290,8 +301,7 @@ try {
                             time: new Date(endTime).getTime() - startDate.getTime(),
                             endTime: new Date(endTime).getTime() - startDate.getTime()
                         }
-                        return calculatePointsOnParaboloid({ start, end });
-
+                        trips.push(calculatePointsOnParaboloid({ start, end }));
                     }
                 });
 
@@ -301,6 +311,7 @@ try {
                 const stopsCount = Math.floor((endDate.getTime() - startDate.getTime()) / 30000);
 
                 const timeSlider = new TimeSlider({
+                    container: "timeSliderDiv",
                     mode: "cumulative-from-start",
                     view,
                     fullTimeExtent: {
@@ -313,13 +324,14 @@ try {
                     }
                 });
 
-                view.ui.add(timeSlider, "bottom-left");
-
                 watch(
                     () => timeSlider.timeExtent,
                     (value) => {
                         currentTime = value.end.getTime() - startDate.getTime();
                         renderNode.requestRender();
+                        const timeString = dateToString(value.end);
+                        const [time, amPM] = timeString.split(/\s/);
+                        currentTimeContainer.innerHTML = `${time}<span class="amPM">${amPM}</span>`;
                     }
                 );
             }
