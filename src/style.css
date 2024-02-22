@@ -49,6 +49,56 @@ body {
   font-size: 1rem;
 }
 
+#calendar > table {
+  border-spacing: 2px;
+}
+
+#calendar {
+  display: flex;
+  justify-content: center;
+  font-size: 0.8rem;
+}
+
+.speedSliderContainer {
+  display: flex;
+  align-items: center;
+  margin: 20px 0;
+  font-size: 0.8rem;
+}
+
+#speedSliderDiv {
+  width: 150px;
+  margin: 0 20px;
+}
+
+.day,
+th {
+  height: 10px;
+  width: 40px;
+  margin: 5px;
+}
+
+th {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: left;
+  color: var(--font-color);
+}
+
+.day {
+  font-size: 0.6rem;
+  font-weight: 600;
+  color: var(--font-color);
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: border-color 0.3s;
+}
+
+.day:hover,
+.day.selected {
+  border-color: white;
+}
+
 .esri-time-slider__row:first-of-type {
   display: none;
 }

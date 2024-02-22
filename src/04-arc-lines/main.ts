@@ -7,38 +7,26 @@ import { createProgram } from "../utils";
 import * as webgl from "@arcgis/core/views/3d/webgl";
 import SpatialReference from "@arcgis/core/geometry/SpatialReference";
 import Papa from "papaparse";
-import Color from "@arcgis/core/Color";
 import * as webMercatorUtils from "@arcgis/core/geometry/support/webMercatorUtils";
-import { watch } from "@arcgis/core/core/reactiveUtils";
+import { watch, whenOnce } from "@arcgis/core/core/reactiveUtils";
 import TimeSlider from "@arcgis/core/widgets/TimeSlider";
-
-interface Trip {
-    tripID: string;
-    startLng: number;
-    startLat: number;
-    endLng: number;
-    endLat: number;
-    startTime: string;
-    endTime: string;
-    durationMin: number;
-}
-
-interface Vertex {
-    x: number;
-    y: number;
-    z: number;
-    color: Array<number>;
-    time: number;
-    endTime: number;
-}
+import { Vertex, Trip } from "./types";
+import TimeExtent from "@arcgis/core/TimeExtent";
+import Color from "@arcgis/core/Color";
+import Slider from "@arcgis/core/widgets/Slider";
 
 const NO_SEG = 30;
 const NO_POSITION_COORDS = 3;
 const NO_COLOR_COORDS = 4;
+
 let startDate: Date = null;
 let endDate: Date = null;
 let currentTime: number = null;
 let vertices: Array<Vertex> = null;
+let renderNode: GeometryRenderNode = null;
+let timeSlider: TimeSlider = null;
+let dailyCounts: Array<number> = null;
+let currentDay: number = 1;
 
 const view = new SceneView({
     container: "viewDiv",
@@ -64,7 +52,7 @@ const view = new SceneView({
 
 (window as any).view = view;
 
-@subclass("esr.views.3d.GeometryRenderNode")
+@subclass("esri.views.3d.GeometryRenderNode")
 class GeometryRenderNode extends RenderNode {
     consumes: __esri.ConsumedNodes = { required: ["transparent-color"] };
     produces: __esri.RenderNodeOutput = "transparent-color";
@@ -198,7 +186,6 @@ class GeometryRenderNode extends RenderNode {
 
     initData() {
         const gl = this.gl;
-        console.log(vertices);
         const numPoints = vertices.length;
         let positions = new Float32Array(numPoints * NO_POSITION_COORDS);
         let colors = new Float32Array(numPoints * NO_COLOR_COORDS);
@@ -236,29 +223,6 @@ class GeometryRenderNode extends RenderNode {
     }
 }
 
-export function calculatePointsOnParaboloid({ start, end }: { start: Vertex, end: Vertex }) {
-    const points: Array<Vertex> = [];
-    const H = 1.0;
-    const { x: xs, y: ys, z: zs, time: time_s } = start;
-    const { x: xe, y: ye, z: ze, time: time_e } = end;
-    const distance = Math.sqrt((xe - xs) ** 2 + (ye - ys) ** 2);
-    const deltaZ = ze - zs;
-    const dh = distance * H;
-    for (let i = 0; i < NO_SEG; i++) {
-        const unitZ = deltaZ / dh;
-        const p = unitZ * unitZ + 1;
-        const z0 = deltaZ >= 0 ? zs : ze;
-        const ratio = deltaZ >= 0 ? i / (NO_SEG - 1) : (1 - (i / (NO_SEG - 1)));
-        const x = xs * (1 - ratio) + xe * ratio;
-        const y = ys * (1 - ratio) + ye * ratio;
-        const z = ratio * (p - ratio) * dh + z0;
-        const color = Color.blendColors(new Color(start.color), new Color(end.color), ratio);
-        const { r, g, b, a } = color;
-        const time = time_s + (time_e - time_s) * ratio;
-        points.push({ x, y, z, color: [r, g, b, Math.floor(a * 255)], time, endTime: time_e })
-    }
-    return points;
-}
 
 const currentTimeContainer = document.getElementById("currentTime");
 const dateToString = (date: Date) => {
@@ -269,74 +233,180 @@ const dateToString = (date: Date) => {
     }).format(date);
 };
 
+const getColor = (count: number): Color => {
+    const stops = [
+        { value: 500, color: new Color("#555") },
+        { value: 4000, color: new Color("#03a9fc") }
+    ];
+    for (let i = 0; i < stops.length; i++) {
+        const stop = stops[i];
+
+        if (count < stop.value) {
+            if (i === 0) {
+                return stop.color;
+            }
+
+            const prev = stops[i - 1];
+
+            const weight = (count - prev.value) / (stop.value - prev.value);
+            return Color.blendColors(prev.color, stop.color, weight);
+        }
+    }
+
+    return stops[stops.length - 1].color;
+}
+
+
+
 try {
     view.when(() => {
-        Papa.parse("./20240101-tripdata-cambridge.csv", {
-            delimiter: ",", download: true, header: true, dynamicTyping: true, complete: (result) => {
-                // sort by time
-                const data = result.data.filter((trip: Trip) => trip.startTime && trip.endTime);
-                data.sort((a: Trip, b: Trip) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
-                startDate = new Date((data[0] as Trip).startTime);
-                endDate = new Date((data[data.length - 1] as Trip).endTime);
-                currentTime = startDate.getTime() - startDate.getTime();
-                let trips: Vertex[][] = [];
-                data.forEach((trip: Trip) => {
-                    if (trip && trip.startTime) {
-                        const { startLng, startLat, endLng, endLat, startTime, endTime } = trip;
-                        const [startX, startY] = webMercatorUtils.lngLatToXY(startLng, startLat);
-                        const [endX, endY] = webMercatorUtils.lngLatToXY(endLng, endLat);
-                        const start = {
-                            x: startX,
-                            y: startY,
-                            z: 50,
-                            color: [245, 66, 173, 0],
-                            time: new Date(startTime).getTime() - startDate.getTime(),
-                            endTime: new Date(endTime).getTime() - startDate.getTime()
-                        }
-                        const end = {
-                            x: endX,
-                            y: endY,
-                            z: 50,
-                            color: [3, 215, 252, 0],
-                            time: new Date(endTime).getTime() - startDate.getTime(),
-                            endTime: new Date(endTime).getTime() - startDate.getTime()
-                        }
-                        trips.push(calculatePointsOnParaboloid({ start, end }));
+        Papa.parse("./202401-tripdata-cambridge.csv", {
+            delimiter: ",", download: true, header: true, dynamicTyping: true, complete: async (result) => {
+
+                const dataProcessingWorker = new Worker("./dataProcessingWorker.ts");
+                let data = result.data.filter((trip: Trip) => trip.startTime && trip.endTime);
+                data = data.map((trip: Trip) => {
+                    const { startLng, startLat, endLng, endLat, startTime, endTime, durationMin } = trip;
+                    const [startX, startY] = webMercatorUtils.lngLatToXY(startLng, startLat);
+                    const [endX, endY] = webMercatorUtils.lngLatToXY(endLng, endLat);
+                    return {
+                        startTime,
+                        endTime,
+                        durationMin,
+                        startX,
+                        startY,
+                        endX,
+                        endY
                     }
                 });
+                dataProcessingWorker.postMessage({ type: "register-data", data });
+                dataProcessingWorker.onmessage = function (e) {
+                    switch (e.data.type) {
+                        case "register-data":
+                            dailyCounts = e.data.counts;
+                            dailyCounts[0] = 0;
+                            generateCalendar();
+                            dataProcessingWorker.postMessage({ type: "get-daily-data", day: currentDay });
+                            break;
+                        case "get-daily-data":
+                            startDate = new Date(e.data.data.startDate);
+                            endDate = new Date(e.data.data.endDate);
+                            currentTime = startDate.getTime() - startDate.getTime();
+                            vertices = e.data.data.vertices;
+                            if (renderNode) {
+                                renderNode.initData();
+                            } else {
+                                renderNode = new GeometryRenderNode({ view });
+                            }
+                            document.querySelector(".date").innerHTML = `${startDate.toDateString()} - ${dailyCounts[currentDay]} trips`;
+                            const stopsCount = Math.floor((endDate.getTime() - startDate.getTime()) / 30000);
+                            if (timeSlider) {
+                                timeSlider.set({
+                                    fullTimeExtent: new TimeExtent({
+                                        start: startDate,
+                                        end: endDate
+                                    }),
+                                    timeExtent: new TimeExtent({
+                                        start: null,
+                                        end: startDate
+                                    }),
+                                    stops: {
+                                        count: stopsCount
+                                    }
+                                });
+                            } else {
+                                timeSlider = new TimeSlider({
+                                    container: "timeSliderDiv",
+                                    mode: "cumulative-from-start",
+                                    view,
+                                    fullTimeExtent: {
+                                        start: startDate,
+                                        end: endDate
+                                    },
+                                    playRate: 100,
+                                    stops: {
+                                        count: stopsCount
+                                    }
+                                });
 
-                vertices = trips.flat();
-                const renderNode = new GeometryRenderNode({ view });
+                                watch(
+                                    () => timeSlider.timeExtent,
+                                    (value) => {
+                                        currentTime = value.end.getTime() - startDate.getTime();
+                                        renderNode.requestRender();
+                                        const timeString = dateToString(value.end);
+                                        const [time, amPM] = timeString.split(/\s/);
+                                        currentTimeContainer.innerHTML = `${time}<span class="amPM">${amPM}</span>`;
+                                    }
+                                );
 
-                const stopsCount = Math.floor((endDate.getTime() - startDate.getTime()) / 30000);
+                                const speedSlider = new Slider({
+                                    container: "speedSliderDiv",
+                                    min: 20,
+                                    max: 200,
+                                    values: [100],
+                                    steps: [20, 100, 200],
+                                    snapOnClickEnabled: true,
+                                    visibleElements: {
+                                        labels: false,
+                                        rangeLabels: false
+                                    }
+                                });
 
-                const timeSlider = new TimeSlider({
-                    container: "timeSliderDiv",
-                    mode: "cumulative-from-start",
-                    view,
-                    fullTimeExtent: {
-                        start: startDate,
-                        end: endDate
-                    },
-                    playRate: 100,
-                    stops: {
-                        count: stopsCount
+                                speedSlider.on("thumb-drag", (event) => {
+                                    if (event.state === "stop") {
+                                        timeSlider.playRate = event.value;
+                                        if (timeSlider.viewModel.state === "playing") {
+                                            whenOnce(() => timeSlider.viewModel.state === "ready").then(() => {
+                                                timeSlider.play();
+                                            })
+                                        }
+                                    }
+                                });
+
+                            }
+                            break;
                     }
-                });
+                }
 
-                watch(
-                    () => timeSlider.timeExtent,
-                    (value) => {
-                        currentTime = value.end.getTime() - startDate.getTime();
-                        renderNode.requestRender();
-                        const timeString = dateToString(value.end);
-                        const [time, amPM] = timeString.split(/\s/);
-                        currentTimeContainer.innerHTML = `${time}<span class="amPM">${amPM}</span>`;
+                function generateCalendar() {
+                    const calendar = document.getElementById("calendar");
+                    const table = document.createElement("table");
+                    calendar.appendChild(table);
+                    const header = document.createElement("thead");
+                    header.innerHTML = `<tr><th>Su</th><th>Mo</th><th>Tu</th><th>We</th><th>Th</th><th>Fr</th><th>Sa</th></tr>`;
+                    table.appendChild(header);
+                    const body = document.createElement("tbody");
+                    table.appendChild(body);
+                    let week = null;
+                    for (let i = 1; i < dailyCounts.length; i++) {
+                        if (i % 7 === 1) {
+                            week = document.createElement("tr");
+                            body.appendChild(week);
+                        }
+                        const day = document.createElement("td");
+                        day.classList.add("day");
+                        if (i === currentDay) {
+                            day.classList.add("selected");
+                        }
+                        day.innerHTML = `${i}`;
+                        const color = getColor(dailyCounts[i]);
+                        day.style.backgroundColor = color.toCss();
+                        day.addEventListener("click", () => {
+                            currentDay = i;
+                            dataProcessingWorker.postMessage({ type: "get-daily-data", day: currentDay });
+                            document.querySelectorAll(".day").forEach((day) => {
+                                day.classList.remove("selected");
+                            });
+                            day.classList.add("selected");
+                        });
+                        week.appendChild(day);
                     }
-                );
+                }
             }
-        })
-    });
+        });
+
+    }).catch(error => console.log(error));
 
 } catch (error) {
     console.error(error);
