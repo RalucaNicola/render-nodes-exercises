@@ -40,10 +40,7 @@ const view = new SceneView({
     viewingMode: "global",
 
     environment: {
-        atmosphere: {
-            quality: "high"
-        },
-
+        atmosphereEnabled: false,
         lighting: {
             directShadowsEnabled: true
         }
