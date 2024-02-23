@@ -20,14 +20,22 @@ const view = new SceneView({
 
     qualityProfile: "high",
     viewingMode: "global",
-
+    camera: {
+        position: [
+            4233715.11713637,
+            3862585.55396099,
+            118009062.73685
+        ],
+        heading: 0.00,
+        tilt: 0.03
+    },
     environment: {
         atmosphere: {
             quality: "high"
         },
 
         lighting: {
-            directShadowsEnabled: true
+            type: "virtual"
         }
     },
     constraints: {
@@ -68,7 +76,7 @@ const main = async () => {
 
         }
 
-        view.when(() => {
+        reactiveUtils.whenOnce(() => !view.updating).then(() => {
             new GeometryRenderNode({ view });
         });
 
@@ -80,14 +88,29 @@ const main = async () => {
 main();
 
 interface Satellite {
-    geometry: number[];
+    geometry: number[]
     color: number[];
 }
+
+let distance = 1e10;
+
+function lerp(a: number, b: number, t: number) {
+    return a + (b - a) * t;
+}
+
+function easeIn(t: number) {
+    return t * t;
+}
+
+const duration = 8000;
 
 @subclass("esr.views.3d.GeometryRenderNode")
 class GeometryRenderNode extends RenderNode {
     consumes: __esri.ConsumedNodes = { required: ["opaque-color"] };
     produces: __esri.RenderNodeOutput = "opaque-color";
+
+    time = Date.now();
+    deltaTime = 0;
 
     program: WebGLProgram;
 
@@ -95,6 +118,7 @@ class GeometryRenderNode extends RenderNode {
     attribColorLocation: number;
     uniformProjectionMatrixLocation: WebGLUniformLocation;
     uniformModelViewMatrixLocation: WebGLUniformLocation;
+    uniformDistanceLocation: WebGLUniformLocation;
 
     vboPositions: WebGLBuffer;
     vboColor: WebGLBuffer;
@@ -107,6 +131,8 @@ class GeometryRenderNode extends RenderNode {
     override render(inputs: ManagedFBO[]): ManagedFBO {
         const output = this.bindRenderTarget();
         const gl = this.gl;
+        this.deltaTime = Date.now() - this.time
+
         gl.bindBuffer(gl.ARRAY_BUFFER, this.vboPositions);
         gl.enableVertexAttribArray(this.attribPositionLocation);
         gl.vertexAttribPointer(this.attribPositionLocation, 3, gl.FLOAT, false, 0, 0);
@@ -128,8 +154,13 @@ class GeometryRenderNode extends RenderNode {
             false,
             this.camera.viewMatrix
         );
+        gl.uniform1f(this.uniformDistanceLocation, distance);
 
         gl.drawArrays(gl.POINTS, 0, satellites.length);
+        if (distance > 0) {
+            distance *= lerp(1, 0, easeIn(this.deltaTime / duration));
+            this.requestRender();
+        }
 
         return output;
     }
@@ -143,12 +174,14 @@ class GeometryRenderNode extends RenderNode {
         in vec4 a_color;
         uniform mat4 u_projectionMatrix;
         uniform mat4 u_modelViewMatrix;
+        uniform float u_distance;
 
         out vec4 v_color;
 
         void main() {
-            gl_Position = u_projectionMatrix * u_modelViewMatrix * a_position;
-            gl_PointSize = 5.0;
+            vec4 position = vec4(a_position.xyz * (1.0 + u_distance / length(a_position.xyz)), 1.0);
+            gl_Position = u_projectionMatrix * u_modelViewMatrix * position;
+            gl_PointSize = 2.0;
             v_color = a_color;
         }
     `;
@@ -158,7 +191,7 @@ class GeometryRenderNode extends RenderNode {
         in vec4 v_color;    
         out vec4 fragColor;
         void main() {
-            fragColor = v_color;
+            fragColor = vec4(1.0, 1.0, 1.0, 1.0);
         }
     `;
 
@@ -172,6 +205,7 @@ class GeometryRenderNode extends RenderNode {
         this.attribPositionLocation = gl.getAttribLocation(this.program, "a_position");
         this.attribColorLocation = gl.getAttribLocation(this.program, "a_color");
         // get program uniforms locations
+        this.uniformDistanceLocation = gl.getUniformLocation(this.program, "u_distance");
         this.uniformProjectionMatrixLocation = gl.getUniformLocation(this.program, "u_projectionMatrix");
         this.uniformModelViewMatrixLocation = gl.getUniformLocation(this.program, "u_modelViewMatrix");
     }
