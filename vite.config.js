@@ -6,7 +6,7 @@ dns.setDefaultResultOrder('verbatim');
 export default defineConfig(() => {
     return {
         root: 'src/',
-        publicDir: '../public/',
+        publicDir: 'public/',
         server: {
             port: 3000
         },
