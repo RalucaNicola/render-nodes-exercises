@@ -60,9 +60,6 @@ class HighlightBloomPass extends RenderNode {
         const color = colorInput.getTexture();
         const output = this.acquireOutputFramebuffer();
 
-
-
-
         const gl = this.gl;
 
         if (!this.program) {
@@ -122,23 +119,6 @@ class HighlightBloomPass extends RenderNode {
             }
             fragColor = vec4(blurSum/pow(blurRadius, 2.0), 0.2) + color;
         }`;
-        // ivec2 texSize = textureSize(highlightTex, 0);
-        // vec2 texelSize = 1 / texSize;
-
-        // vec3 highlight = texture(highlightTex, uv).rgb * kernel[4];
-
-        // for(int i = 0; i < 9; ++i) {
-        //     vec2 offset = texelSize * vec2(i%3 - 1, i/3 - 1);
-        //     highlight +=texture(highlightTex, uv + offset).rgb * kernel[i];
-        //   }
-
-        //fragColor = color;
-        //fragColor = vec4(uv.x, uv.y, 0.0, 1.0);
-        //fragColor = vec4(gl_FragCoord.x / float(texSize.x), gl_FragCoord.y/float(texSize.y), 0.0, 1.0);
-
-
-        //float kernel[9] = float[](1.0/16.0, 2.0/16.0, 1.0/16.0, 2.0/16.0, 4.0/16.0, 2.0/16.0, 1.0/16.0, 2.0/16.0, 1.0/16.0);
-
 
         // Setup GLSL program
         this.program = createProgram(gl, vsSource, fsSource);
