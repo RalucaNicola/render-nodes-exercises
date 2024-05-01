@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import dns from 'dns';
+import glsl from 'vite-plugin-glsl';
 
 dns.setDefaultResultOrder('verbatim');
 
@@ -11,5 +12,9 @@ export default defineConfig(() => {
             port: 3000
         },
         base: './',
+        plugins:
+            [
+                glsl()
+            ]
     };
 });
